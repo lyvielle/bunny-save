@@ -1,0 +1,6 @@
+Flask>=3.0,<4
+gunicorn>=22.0
+paramiko>=3.4
+APScheduler>=3.10,<4
+pyzipper>=0.3.6
+keyring>=24.0

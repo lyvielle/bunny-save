@@ -1,0 +1,10 @@
+data
+restore
+tests
+.git
+.env
+.env.*
+master_key*
+__pycache__
+*.pyc
+.pytest_cache

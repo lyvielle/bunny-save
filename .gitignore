@@ -1,0 +1,39 @@
+# runtime data, never commit
+data/
+restore/
+backups/
+keys/
+gnupg/
+logs/
+*.db
+*.db-*
+*.sqlite*
+known_hosts
+
+# secrets / keys / env
+.env
+.env.*
+master_key*
+*.key
+*.pem
+*.asc
+*.age
+*.gpg
+id_*
+
+# archives and sidecars produced by the app
+*.tar.gz
+*.tar.zst
+*.tar.bz2
+*.zip
+*.part
+*.idx
+
+# python / tooling caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/

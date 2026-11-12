@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bunny Save</title>
+<link rel="manifest" href="/manifest.webmanifest?v=__V__">
+<meta name="theme-color" content="#14161d">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Bunny Save">
+<link rel="icon" href="/static/favicon.ico?v=__V__" sizes="16x16 32x32 48x48">
+<link rel="icon" type="image/png" href="/static/icon-64.png?v=__V__">
+<link rel="apple-touch-icon" href="/static/icon-180.png?v=__V__">
+<link rel="stylesheet" href="/static/style.css?v=__V__">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="app">
+  <aside aria-label="Backup setups">
+    <div class="brand"><img src="/static/icon-64.png?v=__V__" width="32" height="32" alt=""><span class="grow">Bunny Save</span>
+      <button id="new-setup" class="ib" title="New setup" aria-label="New setup"></button></div>
+    <ul id="setup-list" role="list"></ul>
+    <div id="caps"></div>
+  </aside>
+  <main id="main" tabindex="-1">
+    <div id="empty" class="empty"></div>
+    <div id="work" hidden>
+      <header class="top">
+        <h2 id="title"></h2>
+        <nav class="tabs" role="tablist" aria-label="Sections"></nav>
+      </header>
+      <div id="alert" role="alert" hidden></div>
+      <section id="tab-setup" hidden></section>
+      <section id="tab-run" hidden></section>
+      <section id="tab-history" hidden></section>
+    </div>
+  </main>
+</div>
+<div id="toasts" role="status" aria-live="polite"></div>
+<dialog id="modal"><div id="modal-body"></div><form method="dialog" class="mf"><button class="btn primary" autofocus>OK</button></form></dialog>
+<script src="/static/app.js?v=__V__"></script>
+<script>if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(function () {});</script>
+</body>
+</html>
