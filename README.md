@@ -70,14 +70,15 @@ Runs only after a successful, verified backup. Deleting a backup removes the arc
 
 ```bash
 git clone https://github.com/lyvielle/bunny-save && cd bunny-save
-# edit docker-compose.yml: mount what you want to back up, set TZ
+cp .env.example .env                # optional: every compose setting is an environment variable
 docker compose up -d --build        # http://127.0.0.1:8484
 ```
 
-* Compose publishes `127.0.0.1:8484` only. Do not publish on a LAN.
-* `./data` → `/data` holds DB, backups, keys, gnupg, logs, known_hosts. `./restore` → `/restore` is a staging directory.
-* Container sources: mount folders at the same absolute path as on the host (`:ro` is enough for backups).
-* Host source: mount `- /:/hostfs:ro` (or a subtree). "Restore to original locations" onto the host needs a read-write mount.
+* Nothing in `docker-compose.yml` needs editing: it only uses `${VAR:-default}` substitutions, so a pipeline or `.env` file can configure everything (table below). The port is published on `127.0.0.1:8484` by default; never use `BIND_ADDR=0.0.0.0` on a LAN.
+* `DATA_DIR` (default `./data`) → `/data` holds DB, backups, keys, gnupg, logs, known_hosts. `RESTORE_DIR` (default `./restore`) → `/restore` is a staging directory.
+* Container sources: set `SOURCE_n` and `SOURCE_n_AS` (n = 1–3) to the same absolute path so the path matches inside the container (`:ro` via `SOURCE_MODE`, the default, is enough for backups). Unset slots mount `/dev/null` at an unused path.
+* Host source: `HOSTFS_PATH=/` (or a subtree) mounts the host at `/hostfs`; unset it is an empty directory and the Host source stays hidden. "Restore to original locations" onto the host needs `HOSTFS_MODE=rw`.
+* Master key for unattended encrypted schedules: `MASTER_KEY_FILE` (host file, preferred) or `BUNNYSAVE_MASTER_KEY`. While `MASTER_KEY_FILE` is unset, `/dev/null` is mounted and ignored.
 * The container runs as root so ownership and modes can be read and restored.
 * Image: `python:3.12-slim` with `tar gzip bzip2 zstd zip unzip gnupg age`; `gunicorn -w 1 --threads 16 --timeout 0`. One worker on purpose: scheduler and job state live in the process. Healthcheck: `/api/info`.
 * PWA: needs HTTPS or localhost to install (e.g. Tailscale serve or a reverse proxy). Icons and the manifest are versioned (`?v=<hash>`); the service worker is network-first and never caches `/api`.
@@ -85,15 +86,35 @@ docker compose up -d --build        # http://127.0.0.1:8484
 
 ## Environment variables
 
+**Compose / pipeline variables** (host side, all optional):
+
 | Variable | Default | Meaning |
 |---|---|---|
-| `BUNNYSAVE_DATA` | `/data` | data directory (DB, backups, keys, gnupg, logs, known_hosts) |
-| `BUNNYSAVE_PORT` | `8484` | listen port (gunicorn / dev server) |
-| `BUNNYSAVE_HOST_ROOT` | `/hostfs` | mount point of the host filesystem; the Host source appears when it exists and is non-empty |
-| `BUNNYSAVE_MASTER_KEY` | unset | master key for `env` secret mode (visible in `docker inspect`; prefer the file variant) |
-| `BUNNYSAVE_MASTER_KEY_FILE` | unset | file containing the master key (e.g. a Docker secret) |
+| `BIND_ADDR` | `127.0.0.1` | interface the port is published on |
+| `HOST_PORT` | `8484` | published host port (container port is fixed at 8484) |
+| `TZ` | `UTC` | time zone for "daily at" schedules and displayed times |
+| `BUNNYSAVE_IMAGE` | `bunnysave:latest` | image name/tag to build or run |
+| `CONTAINER_NAME` | `bunnysave` | container name |
+| `RESTART_POLICY` | `unless-stopped` | Docker restart policy |
+| `DATA_DIR` | `./data` | host path mounted at `/data` |
+| `RESTORE_DIR` | `./restore` | host path mounted at `/restore` |
+| `HOSTFS_PATH` / `HOSTFS_MODE` | `/var/empty` / `ro` | host path mounted at `/hostfs` / `ro` or `rw` |
+| `SOURCE_1..3` / `SOURCE_1..3_AS` / `SOURCE_MODE` | unset / unset / `ro` | host path, its path inside the container, mount mode |
+| `MASTER_KEY_FILE` | unset | host file with the master key |
+| `BUNNYSAVE_MASTER_KEY` | unset | master key itself (visible in `docker inspect`; prefer the file) |
 | `BUNNYSAVE_SCHEDULER` | `1` | `0` disables APScheduler |
-| `TZ` | image default (UTC) | time zone for "daily at" schedules and displayed times |
+
+**Application variables** (inside the container; compose fixes the path ones):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BUNNYSAVE_DATA` | `/data` | data directory |
+| `BUNNYSAVE_PORT` | `8484` | listen port |
+| `BUNNYSAVE_HOST_ROOT` | `/hostfs` | host filesystem mount point; the Host source appears when it exists and is non-empty |
+| `BUNNYSAVE_MASTER_KEY` | unset | master key for `env` secret mode |
+| `BUNNYSAVE_MASTER_KEY_FILE` | unset (compose: `/run/secrets/bunnysave_master_key`) | file containing the master key; ignored unless it is a regular file |
+| `BUNNYSAVE_SCHEDULER` | `1` | `0` disables APScheduler |
+| `TZ` | image default (UTC) | time zone |
 
 Both master-key variables are removed from the process environment at start-up, and hooks never receive `BUNNYSAVE_MASTER*`.
 Hooks and post-restore commands get `BUNNYSAVE_JOB_ID`, `BUNNYSAVE_ARCHIVE`, `BUNNYSAVE_SOURCE` (restore: the target) and, after a backup, `BUNNYSAVE_STATUS`.
@@ -120,7 +141,7 @@ bunnysave/
   settings.py     paths and master key        util.py      helpers
   static/         index.html, app.js, style.css, sw.js, manifest.webmanifest, icons
 tests/            pytest suite
-Dockerfile  docker-compose.yml  requirements*.txt
+Dockerfile  docker-compose.yml  .env.example  requirements*.txt
 ```
 
 REST API (all JSON): `/api/info`, `/api/setups` (+ `/<id>`, `/<id>/run`, `/<id>/keyring`), `/api/test-source`, `/api/jobs` (+ `/<id>`, `/<id>/cancel`),
@@ -132,7 +153,7 @@ REST API (all JSON): `/api/info`, `/api/setups` (+ `/<id>`, `/<id>/run`, `/<id>/
 * **Root in the container**, with whatever mounts you give it. Read-write host or source mounts let restores overwrite them.
 * **Passwords travel in request bodies** (prompt mode) over whatever transport you expose; use HTTPS when not on localhost.
 * **Post-restore commands are arbitrary shell code from the archive.** Off by default; they run only if you enable them, tick each command, type `RUN` and confirm a dialog. The API enforces the same confirmation. A tampered archive could carry malicious commands: read them first. Pre/post-backup hooks are trusted, user-configured commands.
-* **Master key** in an environment variable is visible via `docker inspect`; use `BUNNYSAVE_MASTER_KEY_FILE`.
+* **Master key** in an environment variable is visible via `docker inspect`; use `MASTER_KEY_FILE`.
 * An archive's integrity is checked after writing (and its SHA-256 recorded); there is no signature, so a modified archive with a re-computed sidecar is not detected.
 * Not security-audited. Vibe-coded: review before trusting it with data you cannot lose.
 

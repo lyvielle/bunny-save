@@ -1,33 +1,27 @@
+# Everything tunable is a ${VAR:-default}: set them in the shell, a CI/CD pipeline, or a .env file (see .env.example).
 services:
   bunnysave:
     build: .
-    image: bunnysave:latest
-    container_name: bunnysave
-    restart: unless-stopped
-    # No authentication by design: publish on localhost only (or your tailnet IP), never 0.0.0.0 on a LAN.
+    image: ${BUNNYSAVE_IMAGE:-bunnysave:latest}
+    container_name: ${CONTAINER_NAME:-bunnysave}
+    restart: ${RESTART_POLICY:-unless-stopped}
+    # No authentication by design: keep BIND_ADDR on 127.0.0.1 (or your tailnet IP), never 0.0.0.0 on a LAN.
     ports:
-      - "127.0.0.1:8484:8484"
+      - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-8484}:8484"
     environment:
-      TZ: Europe/Berlin
-      # Optional: derive archive passwords from a master key instead of typing them (needed for unattended
-      # encrypted schedules). Prefer the file variant so the key is not visible in `docker inspect`.
-      # BUNNYSAVE_HOST_ROOT: /hostfs      # default; the Host source appears when this directory exists
-      # BUNNYSAVE_MASTER_KEY_FILE: /run/secrets/bunnysave_master_key
-    # secrets:
-    #   - bunnysave_master_key
+      TZ: ${TZ:-UTC}
+      BUNNYSAVE_SCHEDULER: ${BUNNYSAVE_SCHEDULER:-1}
+      # Optional master key for unattended encrypted schedules. Visible in `docker inspect`; prefer the key file below.
+      BUNNYSAVE_MASTER_KEY: ${BUNNYSAVE_MASTER_KEY:-}
+      BUNNYSAVE_MASTER_KEY_FILE: /run/secrets/bunnysave_master_key
     volumes:
-      - ./data:/data                       # config DB, history, logs, backups/, keys/, gnupg/, known_hosts
-      # Sources: mount at the SAME absolute path as on the host so include globs and restore-to-"/" line up.
-      # Read-only is enough for backups; use :rw only for the paths you want "restore to /" to write into.
-      - /opt/myapp:/opt/myapp:ro
-      # - /home/me/docs:/home/me/docs:ro
-      # Whole host filesystem as a "Host" source (paths are entered as on the host). Use :ro for backup-only;
-      # drop :ro to allow "restore to original locations" onto the host.
-      # - /:/hostfs:ro
-      - ./restore:/restore                 # staging area for "restore to sub-directory"
-    # Optional: reach Tailscale hosts when the Docker host is on the tailnet but container DNS can't resolve
-    # MagicDNS names. Use 100.x.y.z addresses instead, or:
-    # network_mode: host   # (then drop `ports:`; the app listens on 0.0.0.0:8484 -> firewall it!)
-# secrets:
-#   bunnysave_master_key:
-#     file: ./master_key.txt
+      - ${DATA_DIR:-./data}:/data                      # DB, history, logs, backups/, keys/, gnupg/, known_hosts
+      - ${RESTORE_DIR:-./restore}:/restore             # staging area for "restore to local folder"
+      # Master key file on the host (ignored while unset: /dev/null is not a regular file)
+      - ${MASTER_KEY_FILE:-/dev/null}:/run/secrets/bunnysave_master_key:ro
+      # Host filesystem source. Unset = empty dir (the "Host" source stays hidden). HOSTFS_PATH=/ exposes the whole host.
+      - ${HOSTFS_PATH:-/var/empty}:/hostfs:${HOSTFS_MODE:-ro}
+      # Container sources: mount a host path at the same absolute path inside (set both vars to the same value).
+      - ${SOURCE_1:-/dev/null}:${SOURCE_1_AS:-/mnt/unused-1}:${SOURCE_MODE:-ro}
+      - ${SOURCE_2:-/dev/null}:${SOURCE_2_AS:-/mnt/unused-2}:${SOURCE_MODE:-ro}
+      - ${SOURCE_3:-/dev/null}:${SOURCE_3_AS:-/mnt/unused-3}:${SOURCE_MODE:-ro}

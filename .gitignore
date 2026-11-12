@@ -13,6 +13,7 @@ known_hosts
 # secrets / keys / env
 .env
 .env.*
+!.env.example
 master_key*
 *.key
 *.pem
