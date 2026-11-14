@@ -164,3 +164,4 @@ dialog::backdrop{background:#000d;backdrop-filter:blur(6px)}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 12px}
 .hint{display:flex;gap:8px;color:var(--mute);font-size:13px;align-items:flex-start;margin:0 0 12px}.hint .i{width:15px;height:15px;margin-top:2px}
 .stack{display:flex;flex-direction:column;gap:16px;max-width:900px}
+.secret{-webkit-text-security:disc}

@@ -51,6 +51,12 @@ const api = async (method, url, body) => {
   return j;
 };
 const fmtSize = n => { if (n == null) return ''; const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return n.toFixed(i ? 1 : 0) + ' ' + u[i]; };
+// Mobile Chrome offers its password manager on text inputs that sit near a password field, and the soft keyboard's
+// "Next" action moves focus instead of firing Enter. These attributes opt out of both.
+const NOAUTO = { autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'done', 'data-lpignore': 'true', 'data-1p-ignore': 'true', 'data-form-type': 'other' };
+const MASK_OK = typeof CSS !== 'undefined' && CSS.supports && CSS.supports('-webkit-text-security', 'disc');
+// masked text field that Chrome does not treat as a login password (falls back to type=password elsewhere)
+const secretInput = (attrs = {}) => h('input', { ...NOAUTO, ...attrs, type: MASK_OK ? 'text' : 'password', class: (attrs.class || '') + (MASK_OK ? ' secret' : ''), ...(MASK_OK ? {} : { autocomplete: 'new-password' }) });
 const state = { info: null, setups: [], cur: null, tab: 'setup', poll: null };
 
 // ------------------------------------------------------------ building blocks
@@ -122,18 +128,19 @@ function pathList(items, { skeleton, placeholder, onchange }) {
     path = path.trim(); if (!path || rows.some(r => r.path === path)) return false;
     const r = { path, skel: !!skel, badge: h('span', { class: 'badge muted' }) };
     r.el = h('div', { class: 'prow' + (skeleton ? '' : ' noskel') },
-      h('input', { class: 'mono', value: path, 'aria-label': 'Path', oninput: e => { r.path = e.target.value; r.badge.textContent = ''; } }),
+      h('input', { ...NOAUTO, class: 'mono', value: path, 'aria-label': 'Path', oninput: e => { r.path = e.target.value; r.badge.textContent = ''; } }),
       skeleton ? h('label', { title: 'Store only the directory itself and its permissions, no contents', class: 'small' }, h('input', { type: 'checkbox', checked: r.skel, onchange: e => { r.skel = e.target.checked; } }), 'skeleton') : null,
       r.badge, ib('x', 'Remove', () => { r.el.remove(); rows.splice(rows.indexOf(r), 1); changed(); }));
     list.append(r.el); rows.push(r); return true;
   }
   const addText = text => { let n = 0; for (const e of parsePathLines(text, skeleton)) if (add(e.path, e.skeleton)) n++; changed(); return n; };
   (items || []).forEach(i => add(typeof i === 'string' ? i : i.path, i.skeleton));
-  const quick = h('input', { class: 'mono', placeholder, 'aria-label': 'Add path',
-    onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); if (quick.value.trim()) { if (!addText(quick.value)) toast('Already in the list'); quick.value = ''; list.scrollTop = list.scrollHeight; } } },
+  const commit = () => { if (!quick.value.trim()) return; if (!addText(quick.value)) toast('Already in the list'); quick.value = ''; list.scrollTop = list.scrollHeight; quick.focus(); };
+  const quick = h('input', { ...NOAUTO, class: 'mono', placeholder, 'aria-label': 'Add path',
+    onkeydown: e => { if (e.key === 'Enter' || e.keyCode === 13) { e.preventDefault(); commit(); } },
     onpaste: e => { const t = e.clipboardData.getData('text'); if (/\n/.test(t)) { e.preventDefault(); toast(`Added ${addText(t)} path(s)`, 'ok'); } } });
   const file = h('input', { type: 'file', accept: '.txt,text/plain', hidden: true, onchange: async e => { const f = e.target.files[0]; if (f) toast(`Imported ${addText(await f.text())} path(s) from ${f.name}`, 'ok'); e.target.value = ''; } });
-  const el = h('div', {}, list, h('div', { class: 'row' }, h('div', { class: 'grow', style: 'min-width:200px' }, quick), ib('upload', 'Import a .txt list (skips blank lines and lines starting with # or //)', () => file.click()), file));
+  const el = h('div', {}, list, h('div', { class: 'row' }, h('div', { class: 'grow', style: 'min-width:200px' }, quick), ib('plus', 'Add path', commit), ib('upload', 'Import a .txt list (skips blank lines and lines starting with # or //)', () => file.click()), file));
   return { el, count: () => rows.length,
     get: () => rows.map(r => ({ path: r.path.trim(), skeleton: r.skel })).filter(r => r.path).map(r => skeleton ? r : r.path),
     results(items) {
@@ -184,11 +191,11 @@ function renderEditor() {
     typeOpts.push({ v: 'sftp', icon: 'globe', label: 'SFTP', title: 'SFTP server (also over Tailscale)' });
     f.type = seg(typeOpts, type, v => { type = v; rebuild(); });
     f.auth = seg([{ v: 'password', icon: 'lock', label: 'Password' }, { v: 'key', icon: 'key', label: 'Key file' }, { v: 'tailscale', icon: 'globe', label: 'Tailscale SSH', title: 'No credentials: the tailnet identity authenticates' }], auth, v => { auth = v; rebuild(); });
-    f.host = h('input', { value: s.host || '', placeholder: '100.x.y.z or name.tailnet.ts.net', oninput: () => sync() });
-    f.port = h('input', { type: 'number', value: s.port || 22 }); f.username = h('input', { value: s.username || '', oninput: () => sync() });
-    f.key_path = h('input', { value: s.key_path || '', placeholder: '/data/keys/id_ed25519' });
+    f.host = h('input', { ...NOAUTO, value: s.host || '', placeholder: '100.x.y.z or name.tailnet.ts.net', oninput: () => sync() });
+    f.port = h('input', { type: 'number', value: s.port || 22 }); f.username = h('input', { ...NOAUTO, value: s.username || '', oninput: () => sync() });
+    f.key_path = h('input', { ...NOAUTO, value: s.key_path || '', placeholder: '/data/keys/id_ed25519' });
     f.secret_mode = h('select', {}, [['prompt', 'Prompt on each run'], ['keyring', 'OS keyring']].map(o => h('option', { value: o[0], selected: o[0] === (s.secret_mode || 'prompt') }, o[1])));
-    f.testpw = h('input', { type: 'password', autocomplete: 'off', placeholder: 'only used for the test, never saved' });
+    f.testpw = secretInput({ placeholder: 'only used for the test, never saved' });
     f.includes = pathList(s.includes, { skeleton: true, placeholder: '/opt/myapp/*  (Enter adds, then type the next path)', onchange: () => sync() });
     f.excludes = pathList(s.excludes, { skeleton: false, placeholder: '*.tmp   or   /opt/myapp/cache', onchange: () => sync() });
     f.status = h('span', { class: 'small', 'aria-live': 'polite' });
@@ -398,7 +405,7 @@ function renderBrowser(b, data, password, body) {
   let dest = 'origin', conflictV = 'skip';
   const destSeg = seg([{ v: 'origin', icon: 'server', label: 'Original locations', title: hasHost ? 'Back onto the host filesystem mount' : 'Local files to /, SFTP sources to their own server' }, { v: 'local', icon: 'folder', label: 'Local folder' }, { v: 'sftp', icon: 'globe', label: 'SFTP server' }], dest, v => { dest = v; setMode(); });
   const local = h('input', { class: 'mono', value: '/restore' }), d0 = sftpSrc[0] || {}, dAuthState = { v: d0.auth || 'password' };
-  const dHost = h('input', { value: d0.host || '' }), dPort = h('input', { type: 'number', value: d0.port || 22 }), dUser = h('input', { value: d0.username || '' }), dKey = h('input', { value: d0.key_path || '', placeholder: '/data/keys/id_ed25519' }), dPw = h('input', { type: 'password', autocomplete: 'off' }), dPath = h('input', { class: 'mono', value: '/' });
+  const dHost = h('input', { ...NOAUTO, value: d0.host || '' }), dPort = h('input', { type: 'number', value: d0.port || 22 }), dUser = h('input', { ...NOAUTO, value: d0.username || '' }), dKey = h('input', { ...NOAUTO, value: d0.key_path || '', placeholder: '/data/keys/id_ed25519' }), dPw = secretInput(), dPath = h('input', { ...NOAUTO, class: 'mono', value: '/' });
   const dAuth = seg([{ v: 'password', icon: 'lock', label: 'Password' }, { v: 'key', icon: 'key', label: 'Key file' }, { v: 'tailscale', icon: 'globe', label: 'Tailscale SSH' }], dAuthState.v, v => { dAuthState.v = v; setMode(); });
   const dStatus = h('span', { class: 'small', 'aria-live': 'polite' });
   const dSecret = () => dAuthState.v === 'key' ? { key_passphrase: dPw.value } : { password: dPw.value };
