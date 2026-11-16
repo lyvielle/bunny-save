@@ -103,12 +103,20 @@ function openSetup(id) {
   $('#empty').hidden = true; $('#work').hidden = false;
   $('#title').textContent = state.cur ? state.cur.name : 'New setup';
   state.setups.forEach((s, i) => $('#setup-list').children[i].firstChild.setAttribute('aria-current', String(!!state.cur && s.id === state.cur.id)));
+  $('.tabs').hidden = false;
   showTab(state.cur ? state.tab : 'setup');
+}
+function openArchiveView() {
+  state.cur = null; clearInterval(state.poll); alertMsg('');
+  $('#empty').hidden = true; $('#work').hidden = false; $('#title').textContent = 'Open archive file'; $('.tabs').hidden = true;
+  for (const b of $('#setup-list').children) b.firstChild.setAttribute('aria-current', 'false');
+  for (const n of ['setup', 'run', 'history', 'open']) $('#tab-' + n).hidden = n !== 'open';
+  renderOpen();
 }
 function showTab(t) {
   state.tab = t; alertMsg('');
   for (const b of $('.tabs').children) { b.setAttribute('aria-selected', String(b.dataset.tab === t)); b.disabled = !state.cur && b.dataset.tab !== 'setup'; }
-  for (const n of ['setup', 'run', 'history']) $('#tab-' + n).hidden = n !== t;
+  for (const n of ['setup', 'run', 'history', 'open']) $('#tab-' + n).hidden = n !== t;
   ({ setup: renderEditor, run: renderRun, history: renderHistory })[t]();
 }
 
@@ -336,6 +344,41 @@ async function renderHistory() {
   root.replaceChildren(list.length ? h('div', { class: 'list' }, head, ...rows) : h('div', { class: 'empty', style: 'margin-top:10vh' }, ico('archive'), 'No backups yet'), h('div', { id: 'browse', style: 'margin-top:16px' }));
 }
 
+// ------------------------------------------------------------ open an external archive
+function renderOpen() {
+  const root = $('#tab-open'); root.replaceChildren();
+  let mode = 'passphrase', file = null;
+  const toolOf = n => /\.gpg$/i.test(n) ? 'gpg' : /\.age$/i.test(n) ? 'age' : null;
+  const pathIn = h('input', { ...NOAUTO, class: 'mono', placeholder: '/data/imports/backup-2026….tar.gz.gpg  (or a host path)', oninput: () => sync() });
+  const idIn = h('input', { ...NOAUTO, class: 'mono', placeholder: 'age identity file name in the keys folder' });
+  const picked = h('span', { class: 'muted small' });
+  const fileIn = h('input', { type: 'file', hidden: true, onchange: e => { file = e.target.files[0] || null; picked.textContent = file ? `${file.name} · ${fmtSize(file.size)}` : ''; if (file) pathIn.value = ''; sync(); } });
+  const modeSeg = seg([{ v: 'passphrase', icon: 'key', label: 'Password' }, { v: 'recipient', icon: 'shield', label: 'Key', title: 'gpg: key in the gpg keyring · age: identity file' }], mode, v => { mode = v; sync(); });
+  const idRow = h('label', {}, 'Identity file', idIn), encBox = h('div', { class: 'row', style: 'margin:12px 0' }, h('span', { class: 'muted small' }, 'Encrypted with'), modeSeg.el);
+  const bar = h('i'), progress = h('div', { class: 'bar', hidden: true }, bar);
+  const view = h('div');
+  const nameNow = () => file ? file.name : pathIn.value.trim().split('/').pop();
+  const sync = () => { const t = toolOf(nameNow()); encBox.hidden = !t; idRow.hidden = !(t === 'age' && mode === 'recipient'); go.disabled = !(file || pathIn.value.trim()); };
+  const enc = () => ({ mode, identity_file: idIn.value.trim() });
+  const upload = f => new Promise((res, rej) => {
+    const x = new XMLHttpRequest(), q = new URLSearchParams({ name: f.name, mode, identity: idIn.value.trim() });
+    x.open('PUT', '/api/external/upload?' + q); progress.hidden = false;
+    x.upload.onprogress = e => { if (e.lengthComputable) bar.style.width = (100 * e.loaded / e.total) + '%'; };
+    x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch (_) { /* not json */ } x.status < 300 ? res(j) : rej(new Error(j.error || x.statusText)); };
+    x.onerror = () => rej(new Error('Upload failed')); x.send(f);
+  });
+  const go = btn('archive', 'Open', { cls: 'primary', onclick: guard(async () => {
+    const b = file ? await upload(file) : await api('POST', '/api/external/open', { path: pathIn.value, enc: enc() });
+    progress.hidden = true; toast('Archive ready', 'ok'); openBackup(b, view);
+  }) });
+  root.append(h('div', { class: 'stack' }, h('div', { class: 'card' }, h('h3', {}, ico('archive'), 'Open an archive file'),
+    h('div', { class: 'hint' }, ico('info'), 'For archives made by another Bunny Save instance (e.g. downloaded from your server). Nothing is added to this history; restore uses the same planner, so start point, selection and conflict policy work as usual.'),
+    h('div', { class: 'row' }, btn('upload', 'Choose file…', { cls: 'sm', onclick: () => fileIn.click() }), fileIn, picked),
+    h('div', { class: 'muted small', style: 'margin:10px 0 6px' }, 'or a path inside the container' + (state.info.capabilities.host_root ? ' / on the host' : '') + ':'), pathIn, encBox, idRow, progress,
+    h('div', { class: 'row', style: 'margin-top:14px' }, go)), view));
+  sync();
+}
+
 // ------------------------------------------------------------ browse + restore
 const CAT = { code: ['filecode', 'var(--code)'], doc: ['filetext', 'var(--doc)'], image: ['image', 'var(--image)'], video: ['film', 'var(--video)'], audio: ['music', 'var(--audio)'], archive: ['archive', 'var(--archive)'], app: ['pkg', 'var(--app)'] };
 const EXT = { code: 'py js ts sh bash cs xaml json yml yaml toml ini conf cfg xml html css sql service timer env csproj sln ps1 bat php rb go rs c h cpp java', doc: 'md txt rst pdf doc docx odt rtf log csv', image: 'png jpg jpeg gif webp svg ico bmp avif', video: 'mp4 mkv avi mov webm', audio: 'mp3 flac ogg wav m4a', archive: 'zip tar gz tgz bz2 zst xz 7z rar', app: 'exe dll so bin appimage deb rpm' };
@@ -352,15 +395,15 @@ function buildTree(entries) {
   sum(root);
   return root;
 }
-function openBackup(b) {
-  const box = $('#browse'); box.replaceChildren();
+function openBackup(b, boxEl) {
+  const box = boxEl || $('#browse'); box.replaceChildren();
   const body = h('div');
   const load = guard(async () => {
     body.replaceChildren(spinner('Reading archive (decrypt / decompress)…'));
     try { const data = await api('POST', `/api/backups/${b.id}/entries`, { archive_password: pw ? pw.value : undefined }); renderBrowser(b, data, pw ? pw.value : undefined, body); toast(`Archive opened · ${data.entries.length} entries${data.indexed ? ' · index' : ''}`, 'ok'); } catch (e) { body.replaceChildren(); throw e; }
   });
   const pw = b.encrypted ? h('input', { type: 'password', autocomplete: 'off', 'aria-label': 'Archive password', placeholder: 'Archive password / key passphrase', onkeydown: e => { if (e.key === 'Enter') load(e); } }) : null;
-  box.append(h('div', { class: 'card' }, h('div', { class: 'row', style: 'margin-bottom:12px' }, h('h3', { class: 'grow', style: 'margin:0' }, ico('archive'), b.filename), ib('x', 'Close', () => box.replaceChildren())),
+  box.append(h('div', { class: 'card' }, h('div', { class: 'row', style: 'margin-bottom:12px' }, h('h3', { class: 'grow', style: 'margin:0' }, ico('archive'), b.filename), b.uploaded ? ib('trash', 'Delete the uploaded copy', guard(async () => { if (!confirm('Delete the uploaded copy from this server?')) return; await api('DELETE', '/api/external/' + b.id); box.replaceChildren(); toast('Uploaded copy deleted'); }), 'danger') : null, ib('x', 'Close', () => box.replaceChildren())),
     pw ? h('div', { class: 'row' }, h('div', { class: 'grow' }, pw), btn('lock', 'Open', { cls: 'primary', onclick: load })) : null, body));
   if (!pw) load(); box.scrollIntoView({ behavior: 'smooth' });
 }
@@ -402,9 +445,9 @@ function renderBrowser(b, data, password, body) {
   const top = buildTree(data.entries), treeUl = h('ul'); for (const [k, c] of [...top.children].sort((a, b) => a[0].localeCompare(b[0]))) treeUl.append(renderNode(k, c));
 
   // restore panel
-  let dest = 'origin', conflictV = 'skip';
+  let dest = b.external ? 'local' : 'origin', conflictV = 'skip';
   const destSeg = seg([{ v: 'origin', icon: 'server', label: 'Original locations', title: hasHost ? 'Back onto the host filesystem mount' : 'Local files to /, SFTP sources to their own server' }, { v: 'local', icon: 'folder', label: 'Local folder' }, { v: 'sftp', icon: 'globe', label: 'SFTP server' }], dest, v => { dest = v; setMode(); });
-  const local = h('input', { class: 'mono', value: '/restore' }), d0 = sftpSrc[0] || {}, dAuthState = { v: d0.auth || 'password' };
+  const local = h('input', { class: 'mono', value: b.external ? '/restore/inspect' : '/restore' }), d0 = sftpSrc[0] || {}, dAuthState = { v: d0.auth || 'password' };
   const dHost = h('input', { ...NOAUTO, value: d0.host || '' }), dPort = h('input', { type: 'number', value: d0.port || 22 }), dUser = h('input', { ...NOAUTO, value: d0.username || '' }), dKey = h('input', { ...NOAUTO, value: d0.key_path || '', placeholder: '/data/keys/id_ed25519' }), dPw = secretInput(), dPath = h('input', { ...NOAUTO, class: 'mono', value: '/' });
   const dAuth = seg([{ v: 'password', icon: 'lock', label: 'Password' }, { v: 'key', icon: 'key', label: 'Key file' }, { v: 'tailscale', icon: 'globe', label: 'Tailscale SSH' }], dAuthState.v, v => { dAuthState.v = v; setMode(); });
   const dStatus = h('span', { class: 'small', 'aria-live': 'polite' });
@@ -461,6 +504,7 @@ function renderBrowser(b, data, password, body) {
 
 // ------------------------------------------------------------ boot
 $('.tabs').append(...TABS.map(([k, i, l]) => h('button', { role: 'tab', 'data-tab': k, onclick: () => showTab(k) }, ico(i), h('span', { class: 't' }, l))));
+$('#open-archive').append(ico('upload')); $('#open-archive').addEventListener('click', openArchiveView);
 $('#new-setup').append(ico('plus')); $('#new-setup').addEventListener('click', () => { state.cur = null; state.tab = 'setup'; openSetup(null); });
 $('#empty').append(ico('archive'), h('div', {}, 'Select a setup, or add one with +'));
 (async () => {

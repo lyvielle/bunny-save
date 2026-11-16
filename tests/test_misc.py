@@ -1,3 +1,4 @@
+import os
 import json
 
 import pytest
@@ -128,3 +129,57 @@ def test_download_and_pwa_routes(env, tmp_path):
     assert r.status_code == 200 and "attachment" in r.headers["Content-Disposition"] and r.data[:2] == b"\x1f\x8b"
     assert b"__V__" not in c.get("/").data and b"__V__" not in c.get("/sw.js").data
     assert c.get("/manifest.webmanifest").json["id"] == "/"
+
+
+def _wait(c, jid):
+    import time
+    for _ in range(150):
+        j = c.get(f"/api/jobs/{jid}").json
+        if j["state"] not in ("queued", "running"):
+            return j
+        time.sleep(0.1)
+
+
+def test_open_external_archive(env, tmp_path):
+    """An archive from another instance (not in this DB) can be browsed and restored via path or upload."""
+    import shutil
+    from bunnysave.app import create_app
+    s, _ = env
+    src = tmp_path / "src"
+    (src / "d").mkdir(parents=True)
+    (src / "d" / "note.md").write_text("# external\n")
+    enc = {"enabled": True, "tool": "gpg", "mode": "passphrase", "secret_mode": "prompt"}
+    c = create_app(s, start_scheduler=False).test_client()
+    sid = c.post("/api/setups", json={"name": "e", "encryption": enc, "sources": [{"type": "local", "includes": [str(src / "*")]}]}).json["id"]
+    jid = c.post(f"/api/setups/{sid}/run", json={"archive_password": "pw-ext-1"}).json["id"]
+    assert _wait(c, jid)["state"] == "done"
+    b = c.get("/api/backups").json[0]
+    foreign = tmp_path / "elsewhere"
+    foreign.mkdir()
+    ext_file = foreign / b["filename"]
+    shutil.copy(f"{s.backups_dir}/{b['filename']}", ext_file)            # no .json / .idx sidecar, not in any DB
+    # by path
+    v = c.post("/api/external/open", json={"path": str(ext_file)}).json
+    assert v["external"] and v["encrypted"] and v["fmt"] == "tar.gz" and v["enc_tool"] == "gpg"
+    ents = c.post(f"/api/backups/{v['id']}/entries", json={"archive_password": "pw-ext-1"}).json
+    assert any(e["name"].endswith("d/note.md") for e in ents["entries"]) and ents["indexed"] is False
+    assert c.post(f"/api/backups/{v['id']}/entries", json={"archive_password": "wrong"}).status_code in (400, 500)
+    out = tmp_path / "inspect"
+    body = {"mode": "local", "target": str(out), "start": str(src).lstrip("/"), "archive_password": "pw-ext-1"}
+    rj = c.post(f"/api/backups/{v['id']}/restore/run", json=body).json
+    assert _wait(c, rj["id"])["state"] == "done"
+    assert (out / "d" / "note.md").read_text() == "# external\n"          # start point stripped: no residual path prefix
+    assert not any(p.name == ".bunnysave" for p in out.rglob("*"))
+    assert len(c.get("/api/backups").json) == 1   # history untouched
+    # by upload (raw body, larger than the 4 MB JSON cap)
+    r = c.put(f"/api/external/upload?name={b['filename']}", data=ext_file.read_bytes())
+    assert r.status_code == 200 and r.json["uploaded"]
+    up = r.json["path"]
+    assert os.path.isfile(up) and (s.data_dir / "imports") in __import__("pathlib").Path(up).parents
+    assert c.delete(f"/api/external/{r.json['id']}").status_code == 200 and not os.path.exists(up)
+    big = c.put("/api/external/upload?name=big.tar.gz", data=os.urandom(5 * 1024 * 1024))
+    assert big.status_code == 200
+    c.delete(f"/api/external/{big.json['id']}")
+    # rejects unknown types and missing files
+    assert c.put("/api/external/upload?name=notes.txt", data=b"x").status_code == 400
+    assert c.post("/api/external/open", json={"path": str(tmp_path / "nope.tar.gz")}).status_code == 400

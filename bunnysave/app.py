@@ -13,6 +13,7 @@ from .backup import delete_backup_files
 from .browse import list_archive, preview
 from .conflict import POLICIES
 from .db import DB
+from .external import make_external, safe_name, view as external_view
 from .jobs import JobManager
 from .model import normalize_setup
 from .scheduler import Scheduler
@@ -175,6 +176,60 @@ def create_app(settings=None, start_scheduler=None):
             keyring_set(f"sftp-key:{src['key_path']}" if src.get("auth") == "key" else sftp_secret_name(src), b["value"])
         return jsonify(ok=True)
 
+    # ---------------- external archives (not in this instance's history)
+    externals = {}
+
+    def _get_backup(bid):
+        return db.get_backup(bid) or externals.get(bid) or _404()
+
+    def _register_external(path, name, hint, uploaded):
+        rec = make_external("x" + uuid.uuid4().hex[:10], path, name, hint, uploaded)
+        externals[rec["id"]] = rec
+        return jsonify(external_view(rec))
+
+    @app.post("/api/external/open")
+    def external_open():
+        body = request.get_json(force=True)
+        raw = (body.get("path") or "").strip()
+        if not raw:
+            raise ValueError("path required")
+        cands = [raw, str(settings.host_root) + "/" + raw.lstrip("/")] if settings.host_available() else [raw]
+        path = next((c for c in cands if os.path.isfile(c)), None)
+        if not path:
+            raise ValueError("file not found inside the container" + (" or under the host mount" if settings.host_available() else ""))
+        return _register_external(path, os.path.basename(raw), body.get("enc"), False)
+
+    @app.put("/api/external/upload")
+    def external_upload():
+        request.max_content_length = 1 << 44  # archives are large; every other route keeps the 4 MiB cap
+        name = safe_name(request.args.get("name"))
+        from .external import detect
+        detect(name)  # reject unsupported names before receiving gigabytes
+        d = settings.data_dir / "imports"
+        d.mkdir(exist_ok=True)
+        final = d / f"{uuid.uuid4().hex[:8]}-{name}"
+        part = str(final) + ".part"
+        try:
+            with open(part, "wb") as out:
+                shutil.copyfileobj(request.stream, out, 1024 * 1024)
+            os.replace(part, final)
+        finally:
+            if os.path.exists(part):
+                os.remove(part)
+        hint = {"mode": request.args.get("mode"), "identity_file": request.args.get("identity")}
+        try:
+            return _register_external(str(final), name, hint, True)
+        except Exception:
+            os.remove(final)
+            raise
+
+    @app.delete("/api/external/<bid>")
+    def external_close(bid):
+        rec = externals.pop(bid, None) or _404()
+        if rec["uploaded"] and os.path.isfile(rec["path"]):
+            os.remove(rec["path"])
+        return jsonify(ok=True)
+
     # ---------------- backups
     def backup_view(b):
         return {k: b[k] for k in ("id", "setup_id", "setup_name", "filename", "created", "size", "fmt", "encrypted",
@@ -212,13 +267,13 @@ def create_app(settings=None, start_scheduler=None):
 
     @app.post("/api/backups/<bid>/entries")
     def backup_entries(bid):
-        b = db.get_backup(bid) or _404()
+        b = _get_backup(bid)
         body = request.get_json(silent=True) or {}
         return jsonify(_with_secret(b, body, lambda s: list_archive(b, s, settings)))
 
     @app.post("/api/backups/<bid>/preview")
     def backup_preview(bid):
-        b = db.get_backup(bid) or _404()
+        b = _get_backup(bid)
         body = request.get_json(force=True)
         try:
             return jsonify(_with_secret(b, body, lambda s: preview(b, s, settings, body["path"])))
@@ -233,7 +288,7 @@ def create_app(settings=None, start_scheduler=None):
 
     @app.post("/api/backups/<bid>/restore/plan")
     def restore_plan(bid):
-        b = db.get_backup(bid) or _404()
+        b = _get_backup(bid)
         body = request.get_json(force=True)
         supplied = {"archive_password": body.get("archive_password"), "sftp": body.get("sftp") or {},
                     "dest": body.get("dest_secret") or {}}
@@ -241,7 +296,7 @@ def create_app(settings=None, start_scheduler=None):
 
     @app.post("/api/backups/<bid>/restore/run")
     def restore_run(bid):
-        b = db.get_backup(bid) or _404()
+        b = _get_backup(bid)
         body = request.get_json(force=True)
         pr = body.get("post_restore") or {}
         if pr.get("enabled") and pr.get("confirm") != "RUN":

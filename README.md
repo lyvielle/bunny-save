@@ -44,6 +44,12 @@ combined with Container sources in one setup), *SFTP* (password, key file, or Ta
 globs and a *skeleton* flag (directory and permissions only, no contents); excludes are patterns or paths. "Test validity" checks
 connection, existence and size of each entry.
 
+**Opening an archive from another instance:** the upload icon in the sidebar opens a `.tar.gz/.tar.zst/.tar.bz2/.zip` (optionally `.gpg`/`.age`)
+that is not in this instance's history, e.g. a backup downloaded from your server. Pick a file (uploaded to `/data/imports`, deletable from the UI)
+or give a path inside the container (or a host path when the host mount is present). Format and encryption come from the file name
+(zip: from the entry flags); for `.gpg`/`.age` choose password or key. It then browses and restores with the normal planner (start point, selection,
+conflict policy; default target `/restore/inspect`) without touching the history. No `.json`/`.idx` sidecar is needed, so listing reads the whole archive.
+
 **Retention:** keep all, last N, younger than N days, or GFS (daily/weekly/monthly/yearly). The newest backup is never deleted.
 Runs only after a successful, verified backup. Deleting a backup removes the archive, `.json` and `.idx`.
 
@@ -130,6 +136,7 @@ bunnysave/
   archive_io.py   compress/encrypt/decrypt pipelines, readers, verification, index read/write
   browse.py       listing and previews (index fast path, archive fallback, in-RAM cache)
   sources.py      LocalFs / HostFs / SftpFs, glob, excludes, scanning
+  external.py     archives opened from a file (not in the history): name/zip-flag detection
   testing.py      "Test validity" for sources
   secretstore.py  prompt / master-key (scrypt) / keyring secrets
   redact.py       secret redaction and JSON logging
@@ -144,7 +151,7 @@ tests/            pytest suite
 Dockerfile  docker-compose.yml  .env.example  requirements*.txt
 ```
 
-REST API (all JSON): `/api/info`, `/api/setups` (+ `/<id>`, `/<id>/run`, `/<id>/keyring`), `/api/test-source`, `/api/jobs` (+ `/<id>`, `/<id>/cancel`),
+REST API (all JSON): `/api/info`, `/api/setups` (+ `/<id>`, `/<id>/run`, `/<id>/keyring`), `/api/test-source`, `/api/external/open|upload` (+ `DELETE /<id>`), `/api/jobs` (+ `/<id>`, `/<id>/cancel`),
 `/api/backups` (+ `/<id>`, `/<id>/download`, `/<id>/entries`, `/<id>/preview`, `/<id>/restore/plan`, `/<id>/restore/run`).
 
 ## Security notes
@@ -161,6 +168,7 @@ REST API (all JSON): `/api/info`, `/api/setups` (+ `/<id>`, `/<id>/run`, `/<id>/
 
 * Automated tests cover Flask test-client flows and subprocess round trips (gpg, age, tar.gz); the JS only gets a syntax check. SFTP/Tailscale SSH, zip AES, APScheduler, keyring, zstd, the Docker build and the browser UI were not covered by automated tests.
 * Scheduled (unattended) runs need `env` or `keyring` secrets; `prompt` setups fail with a clear message.
+* Opened external archives are registered in memory only: after a restart, open them again. Uploaded copies stay in `/data/imports` until deleted.
 * Job state and logs shown in the UI are in memory (last 60 jobs); a restart clears them. Backup history is in SQLite.
 * Verifying a recipient-mode archive needs the private key available in the container.
 * Hard links are stored as separate copies; sockets, FIFOs and devices are skipped (logged).

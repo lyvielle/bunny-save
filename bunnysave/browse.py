@@ -100,7 +100,7 @@ def list_archive(backup, secret, settings):
                     previews[m.name.lstrip("/")] = data.decode("utf-8", "replace")
                     used += len(data)
     _cache_put(backup["id"], entries, previews, binary)
-    if backup["fmt"] != "zip" and not truncated and manifest:
+    if backup["fmt"] != "zip" and not truncated and manifest and backup.get("sha256"):
         try:  # upgrade an old backup: next open is instant
             write_index(_index_path(backup), {"v": 1, "archive_sha256": backup["sha256"], "manifest": manifest, "entries": entries,
                                               "previews": previews, "binary": binary}, _enc(backup), secret, settings)
